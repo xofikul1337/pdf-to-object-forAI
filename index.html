@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PDF → Semantic-ready JSON (Chunks)</title>
+  <!--Made BY: Shofikul Founder OF : TEAM X !337-->
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#06b6d4}
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;padding:24px;background:linear-gradient(180deg,#071024 0%, #071832 100%);color:#e6eef6}
+    .wrap{max-width:900px;margin:0 auto}
+    h1{margin:0 0 6px;font-size:20px}
+    p.lead{color:var(--muted);margin:0 0 18px}
+    .card{background:var(--card);padding:18px;border-radius:10px;box-shadow:0 6px 20px rgba(2,6,23,0.6);margin-bottom:14px}
+    label{display:block;margin:8px 0 6px;color:var(--muted);font-size:13px}
+    input[type=file]{color:var(--muted)}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    input[type=number], input[type=text], select{padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+    button{background:var(--accent);border:none;color:#012;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600}
+    button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+    .progress{height:10px;background:rgba(255,255,255,0.03);border-radius:6px;overflow:hidden;margin-top:10px}
+    .progress > i{display:block;height:100%;background:linear-gradient(90deg,#06b6d4,#7c3aed);width:0%}
+    pre{background:#021124;padding:12px;border-radius:8px;overflow:auto;color:#d7f1fb}
+    .muted{color:var(--muted);font-size:13px}
+    .small{font-size:13px;color:var(--muted)}
+    .flex-between{display:flex;justify-content:space-between;align-items:center}
+  </style>
+  <!-- PDF.js from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PDF → JSON Chunks (client-side)</h1>
+    <p class="lead">Upload one or more PDF files. The page will extract text, split into chunks (preserving words), and produce a <code>corpus.json</code> you can download.</p>
+
+    <div class="card">
+      <label>Select PDF files</label>
+      <input id="fileInput" type="file" accept="application/pdf" multiple />
+      <label>Chunk size (approx. characters per chunk)</label>
+      <input id="chunkSize" type="number" value="800" min="200" max="5000" />
+      <div style="margin-top:10px" class="row">
+        <button id="startBtn">Start Extract & Build JSON</button>
+        <button id="downloadBtn" class="secondary" disabled>Download JSON</button>
+        <button id="copyBtn" class="secondary" disabled>Copy JSON</button>
+        <button id="clearBtn" class="secondary">Clear</button>
+      </div>
+
+      <div style="margin-top:12px" class="small">Tip: keep <strong>chunk size</strong> around 400–1200 for best semantic results.</div>
+
+      <div style="margin-top:12px">
+        <div class="flex-between">
+          <div class="muted">Status:</div>
+          <div id="status" class="muted">Idle</div>
+        </div>
+        <div class="progress" aria-hidden>
+          <i id="progressBar"></i>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <div><strong>Preview JSON (first items)</strong></div>
+        <div class="muted" id="stats">Chunks: 0 | Files: 0</div>
+      </div>
+      <pre id="preview" style="height:260px">No output yet...</pre>
+    </div>
+
+    <div class="card small">
+      <div><strong>How it works (quick):</strong></div>
+      <ol>
+        <li>Uploads are parsed using PDF.js in your browser (no server).</li>
+        <li>All text is concatenated per file, then split into chunks by characters while keeping words whole.</li>
+        <li>A JSON array of objects <code>{"file":"...","chunk":"..."}</code> is generated and downloadable.</li>
+      </ol>
+      <div class="muted">Warning: very large PDFs or many files may be slow or memory heavy in the browser. For huge corpora prefer server-side processing.</div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  // configure pdfjs worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.worker.min.js';
+
+  const fileInput = document.getElementById('fileInput');
+  const startBtn = document.getElementById('startBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const copyBtn = document.getElementById('copyBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const preview = document.getElementById('preview');
+  const status = document.getElementById('status');
+  const progressBar = document.getElementById('progressBar');
+  const chunkSizeInput = document.getElementById('chunkSize');
+  const stats = document.getElementById('stats');
+
+  let outputArray = []; // final JSON array
+  let currentAbort = null;
+
+  function setStatus(s){ status.textContent = s; }
+  function setProgress(p){ progressBar.style.width = (p*100)+'%'; }
+
+  function chunkText(text, size){
+    const chunks = [];
+    let i = 0;
+    const n = text.length;
+    while(i < n){
+      let end = i + size;
+      if(end >= n){
+        chunks.push(text.slice(i).trim());
+        break;
+      }
+      //Coded By: Shofikul Islam
+      let slice = text.slice(i, end);
+      let br = slice.lastIndexOf('\n');
+      if(br > Math.floor(size*0.25)){
+        end = i + br;
+      } else {
+     
+        let lastSpace = slice.lastIndexOf(' ');
+        if(lastSpace > Math.floor(size*0.25)){
+          end = i + lastSpace;
+        } else {
+       
+          end = i + size;
+        }
+      }
+      chunks.push(text.slice(i, end).trim());
+      i = end;
+    }
+    return chunks.filter(c => c.length > 0);
+  }
+
+  async function extractTextFromPDF(file){
+    // file: File object
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({data: arrayBuffer});
+    const pdfDoc = await loadingTask.promise;
+    const numPages = pdfDoc.numPages;
+    let fullText = '';
+    for(let p=1; p<=numPages; p++){
+      try{
+        const page = await pdfDoc.getPage(p);
+        const content = await page.getTextContent();
+        const strings = content.items.map(i => i.str || '').join(' ');
+       
+        fullText += strings.replace(/\s+/g,' ').trim() + '\n\n';
+      }catch(err){
+        console.warn('Page read error', p, err);
+      }
+      setProgress((p/numPages)*0.5); 
+    }
+    setProgress(0.5);
+    return fullText.trim();
+  }
+
+  async function processFiles(files){
+    outputArray = [];
+    const fileList = Array.from(files);
+    setStatus('Starting extraction...');
+    let fileCount = 0;
+    for(const file of fileList){
+      setStatus(`Reading ${file.name} (${fileCount+1}/${fileList.length})`);
+      try{
+        const text = await extractTextFromPDF(file);
+        setStatus(`Chunking ${file.name} ...`);
+        const csize = Math.max(200, parseInt(chunkSizeInput.value) || 800);
+        const chunks = chunkText(text, csize);
+        
+        for(const ch of chunks){
+          outputArray.push({ file: file.name, chunk: ch });
+        }
+        fileCount++;
+        stats.textContent = `Chunks: ${outputArray.length} | Files: ${fileCount}`;
+      }catch(err){
+        console.error('Error processing file', file.name, err);
+      }
+      setProgress( (fileCount / fileList.length) );
+    }
+    setStatus('Done. JSON ready.');
+    setProgress(1);
+    previewJSON();
+    downloadBtn.disabled = false;
+    copyBtn.disabled = false;
+  }
+
+  function previewJSON(){
+    const sample = outputArray.slice(0, 6);
+    preview.textContent = JSON.stringify(sample, null, 2) + (outputArray.length > 6 ? '\n\n... ('+outputArray.length+' total chunks)':'');
+  }
+
+  function downloadJSON(){
+    const filename = 'corpus.json';
+    const blob = new Blob([JSON.stringify(outputArray, null, 2)], {type: 'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 500);
+  }
+
+  async function copyJSONToClipboard(){
+    try{
+      await navigator.clipboard.writeText(JSON.stringify(outputArray, null, 2));
+      alert('JSON copied to clipboard (first 100000 chars may be truncated by clipboard).');
+    }catch(e){
+      alert('Clipboard copy failed. Please use Download JSON.');
+    }
+  }
+
+  startBtn.addEventListener('click', async ()=>{
+    const files = fileInput.files;
+    if(!files || files.length === 0){
+      alert('Select one or more PDF files first.');
+      return;
+    }
+ 
+    startBtn.disabled = true;
+    downloadBtn.disabled = true;
+    copyBtn.disabled = true;
+    fileInput.disabled = true;
+    chunkSizeInput.disabled = true;
+    setProgress(0);
+    try{
+      await processFiles(files);
+    }catch(err){
+      console.error(err);
+      alert('Error during processing: '+err.message);
+    }finally{
+      startBtn.disabled = false;
+      fileInput.disabled = false;
+      chunkSizeInput.disabled = false;
+    }
+  });
+
+  downloadBtn.addEventListener('click', downloadJSON);
+  copyBtn.addEventListener('click', copyJSONToClipboard);
+  clearBtn.addEventListener('click', ()=>{
+    outputArray = [];
+    preview.textContent = 'No output yet...';
+    setStatus('Cleared');
+    setProgress(0);
+    stats.textContent = 'Chunks: 0 | Files: 0';
+    downloadBtn.disabled = true;
+    copyBtn.disabled = true;
+    fileInput.value = '';
+  });
+
+})();
+</script>
+</body>
+</html>
